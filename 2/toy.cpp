@@ -33,7 +33,7 @@ static int gettok() {
         
     if (isalpha(LastChar)) {    // identifier: [a-zA-Z][a-zA-Z0-9]*
         IdentifierStr = LastChar;
-        while (isalpha(LastChar = getchar())) {
+        while (isalnum(LastChar = getchar())) {
             IdentifierStr += LastChar;
         }
 
@@ -53,7 +53,7 @@ static int gettok() {
             LastChar = getchar();
         } while (isdigit(LastChar) || LastChar == '.');
 
-        NumVal = strtod(NumStr.c_str(), 0);
+        NumVal = strtod(NumStr.c_str(), nullptr);
         return tok_number;
     }
 
@@ -80,10 +80,11 @@ static int gettok() {
     return ThisChar;
 }
 
-
+///===---------------------------------------------------------------===//
 /// AST（Abstract Syntax Tree)
 /// The AST for a program captures its behavior in such a way
 /// that it is easy for later stages of the compiler to interpret.
+///===---------------------------------------------------------------===//
 
 /// expressions, prototype, function object
 
@@ -229,7 +230,7 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
     if (CurTok != ')') {
         while (true) {
             if (auto Arg = ParseExpression()) {
-                Args.push_back(Arg);
+                Args.push_back(std::move(Arg));
             } else {
                 return nullptr;
             }
@@ -292,6 +293,9 @@ static int GetTokPrecedence() {
 }
 
 
+static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
+                                            std::unique_ptr<ExprAST> LHS);
+
 /// expression
 ///     ::= primary binoprhs
 ///
@@ -344,8 +348,126 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
 }
 
 
+/// prototype
+///     ::= id '(' id* ')'
+static std::unique_ptr<PrototypeAST> ParsePrototype() {
+    if (CurTok != tok_identifier) {
+        return LogErrorP("Expected function name in prototype");
+    }
+
+    std::string FnName = IdentifierStr;
+    getNextToken();
+
+    if (CurTok != '(') {
+        return LogErrorP("Expected '(' in prototype");
+    }
+
+    // Read the list of argument names.
+    std::vector<std::string> ArgNames;
+    while (getNextToken() == tok_identifier) {
+        ArgNames.push_back(IdentifierStr);
+    }
+    if (CurTok != ')') {
+        return LogErrorP("Expected ')' in prototype");
+    }
+
+    // success
+    getNextToken(); // eat ')'.
+
+    return std::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
+}
+
+/// definition := 'def' pototype expression
+static std::unique_ptr<FunctionAST> ParseDefinition() {
+    getNextToken();
+    auto Proto = ParsePrototype();
+    if (!Proto) {
+        return nullptr;
+    }
+    if (auto E = ParseExpression()) {
+        return std::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+    }
+    return nullptr;
+}
+
+/// external := 'extern' prototype
+static std::unique_ptr<PrototypeAST> ParseExtern() {
+    getNextToken(); // eat extern
+    return ParsePrototype();
+}
+
+/// toplevelexpr := expression
+static std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
+    if (auto E = ParseExpression()) {
+        // Make an anonymous proto.
+        auto Proto = std::make_unique<PrototypeAST>("", std::vector<std::string>());
+        return std::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+    }
+    return nullptr;
+}
+
+
+//====-------------------===//
+// Top-Level parsing
+//====-------------------===//
+
+static void HandleDefinition() {
+    if (ParseDefinition()) {
+        fprintf(stderr, "Parsed a function definition.\n");
+    } else {
+        // Skip token for error recovery.
+        getNextToken();
+    }
+}
+
+static void HandleExtern() {
+    if (ParseExtern()) {
+        fprintf(stderr, "Parsed an extern\n");
+    } else {
+        // Skip token for error recovery.
+        getNextToken();
+    }
+}
+
+static void HandleTopLevelExpression() {
+    // Evaluate a top-level expression into an anonymous function.
+    if (ParseTopLevelExpr()) {
+        fprintf(stderr, "Parsed a top-level expr\n");
+    } else {
+        // Skip token for error recovery.
+        getNextToken();
+    }
+}
+
+/// top := definition | external | expression | ';'
+static void MainLoop() {
+    while (true) {
+        fprintf(stderr, "ready> ");
+        switch (CurTok) {
+            case tok_eof: return;
+            case ';': getNextToken(); break;
+            case tok_def: HandleDefinition(); break;
+            case tok_extern: HandleExtern(); break;
+            default: HandleTopLevelExpression(); break;
+        }
+    }
+}
+
+
+
 int main() {
 
+    // Prime the first token.
+    fprintf(stderr, "ready> ");
+
+    getNextToken();
+
+    // Run the main "interpreter loop" now.
+    MainLoop();
+
+    // auto ast = ParseExpression();
+
+    return 0;
 }
 
 
